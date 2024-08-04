@@ -1,0 +1,9 @@
+vectorDB
+.env
+data*
+model
+layers-python
+mnt
+commends.txt
+results*
+.venv

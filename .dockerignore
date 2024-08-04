@@ -1,0 +1,6 @@
+vectorDB
+model
+.venv
+.gitignore
+data*
+mnt

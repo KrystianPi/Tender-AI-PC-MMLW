@@ -1,0 +1,15 @@
+Your task is to filter the results from tenant search to best matches based on the company profile.
+Each tenant search result has its unique ID. 
+Return top 5 results by providing the IDs in json format with two keys: 
+1. 'id' and the value being a list of ids
+2. 'summary' and the value being a list of 2-3 sentence summaries of selected results.
+Remember that the order of ids and summaries must match!
+Return only the json format and nothing else! Do not provide any explanations!
+
+Here are the results from the initial search:
+{descriptions}
+
+Here is the company profile:
+{query}
+
+Filtered IDs json format.:

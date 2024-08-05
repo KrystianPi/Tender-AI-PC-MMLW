@@ -9,6 +9,8 @@ import json
 from typing import List, Tuple
 from utils.retriever import Retriever
 from utils.llm import LLM
+import dotenv
+dotenv.load_dotenv()
 
 warnings.filterwarnings('ignore')
 
@@ -26,28 +28,30 @@ class TenantSearchAPI:
     def __init__(self):
         self.app = FastAPI()
         self.load_env_vars()
-        self.load_data()
         self.initialize_components()
+        self.connect_database()
         self.load_prompt()
         self.setup_routes()
+        self.retriever.fit_bm25()
 
     def load_env_vars(self):
         self.MODEL_PATH = os.getenv('MODEL_PATH', 'mnt/efs/model')
-        self.DF_PATH = os.getenv('DF_PATH', 'mnt/efs/data_pre_v3.csv')
         self.PROMPT_PATH = os.getenv('PROMPT_PATH', 'prompt.txt')
+        self.RDS_HOST = os.getenv('RDS_HOST')
+        self.RDS_PASSWORD = os.getenv('RDS_PASSWORD')
+        self.INDEX_NAME = os.getenv('INDEX_NAME')
+        self.BM25_PATH = '/mnt/efs/bm25.json'
 
-    def load_data(self):
+    def connect_database(self):
         try:
-            self.df = pd.read_csv(self.DF_PATH)
-            self.df['Województwo'] = [item.split(';') for item in self.df['Województwo']]
-            self.df['categories'] = [item.split(';') for item in self.df['categories']]
+            self.retriever.connect_db(self.RDS_HOST, self.RDS_PASSWORD)
         except Exception as e:
-            logger.error(f"Failed to load data from {self.DF_PATH}: {e}")
+            logger.error(f"Failed to connect to database at {self.RDS_HOST}: {e}")
             raise
 
     def initialize_components(self):
         try:
-            self.retriever = Retriever(self.df, self.MODEL_PATH)
+            self.retriever = Retriever(self.MODEL_PATH, self.INDEX_NAME, self.BM25_PATH)
         except Exception as e:
             logger.error(f"Failed to initialize the retriever: {e}")
             raise
@@ -84,10 +88,15 @@ class TenantSearchAPI:
             return {"status": "ok"}
 
     def search_tenants(self, query: str, categories: List[str], locations: List[str]) -> List[Tuple[int, str]]:
-        filter_dict = {'categories': categories, 'Województwo': locations}
-        results = self.retriever.search(query, filter_dict)
-        ids = [result.metadata['id'] for result in results]
-        descriptions_list = [f'id: {number}: {self.df[self.df["uuid"] == id]["Krótki opis"].squeeze()}' for id, number in zip(ids, range(len(ids)))]
+        filter_dict = {'categories': categories, 'wojewodztwo': locations}
+        ids, df = self.retriever.search(query, filter_dict)
+        short_descriptions = []
+        for id in ids:
+            text = df[df["uuid"] == id]["krotki_opis"].squeeze()
+            text = text.replace("\n", " ")
+            tokens = text.split(' ')[:1000]
+            short_descriptions.append(' '.join(tokens))
+        descriptions_list = [f'id: {number}: {desc}' for desc, number in zip(short_descriptions, range(len(ids)))]
         descriptions = '\n'.join(descriptions_list)
 
         prompt = self.prompt_template.format(descriptions=descriptions, query=query)
@@ -104,13 +113,13 @@ class TenantSearchAPI:
             filtered_results = [{
                 'id': id,
                 'summary': summary,
-                'opis': self.df[self.df['uuid'] == id]["Krótki opis"].squeeze(),
-                'Województwo': self.df[self.df['uuid'] == id]["Województwo"].squeeze(),
-                'Miasto': self.df[self.df['uuid'] == id]["Miasto/Powiat"].squeeze(),
-                'url': self.df[self.df['uuid'] == id]["Link"].squeeze(),
-                'Zamawiający': self.df[self.df['uuid'] == id]["Zamawiający"].squeeze(),
-                'Data Zakończenia': self.df[self.df['uuid'] == id]["Data Zakończenia"].squeeze(),
-                'Kategoria': self.df[self.df['uuid'] == id]["kategoria - colab"].squeeze(),
+                'opis': df[df['uuid'] == id]["krotki_opis"].squeeze(),
+                'Województwo': df[df['uuid'] == id]["wojewodztwo"].squeeze(),
+                'Miasto': df[df['uuid'] == id]["miasto_powiat"].squeeze(),
+                'url': df[df['uuid'] == id]["link"].squeeze(),
+                'Zamawiający': df[df['uuid'] == id]["zamawiajacy"].squeeze(),
+                'Data Zakończenia': df[df['uuid'] == id]["data_zakonczenia"].squeeze(),
+                'Kategoria': df[df['uuid'] == id]["kategoria_colab"].squeeze(),
             } for id, summary in zip(ids_response, summaries)]
             return filtered_results
 
